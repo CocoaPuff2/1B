@@ -1,9 +1,23 @@
+/*
+ * Psuedocode:
+ * Creates 3 child processes to process
+ * the command: ps -ef | grep <keyword> | wc -l
+ *               ggc  (pipe)   gc  (pipe)   c
+ *
+ * Works in reverse ordder
+ *      ggc --> ps, gc --> grep, c --> wx -l, parent --> wait()
+ *
+ * fds[0] --> first pipe between "ps" and "grep"
+ * fds[1] --> second pipe between "grep" and "wc"
+ *
+ */
+
+
 #include <sys/types.h>   // for fork, wait
 #include <sys/wait.h>    // for wait
 #include <unistd.h>      // for fork, pipe, dup, close
 #include <stdio.h>       // for NULL, perror
 #include <stdlib.h>      // for exit
-
 #include <iostream>      // for cout
 
 using namespace std;
@@ -31,14 +45,12 @@ int main( int argc, char** argv ) {
 
         if ((pid = fork()) == 0) {
             // GREAT GRAND-CHILD PROCESS
-            // fork a grand-child
-            // if I'm a grand-child
-            // create a pipe using fds[1]
+            // create another pipe using fds[1]
             pipe(fds[1]);
 
             if ((pid = fork()) == 0) {
                 // STDIN_FILENO (0) → reads from keyboard
-                //STDOUT_FILENO (1) writes to screen
+                // STDOUT_FILENO (1) writes to screen
                 // 0 = read end of pipe, 1 = write end of pipe
                 dup2(fds[0][1], STDOUT_FILENO);
                 close(fds[0][0]); // closes the unused read end
@@ -61,7 +73,7 @@ int main( int argc, char** argv ) {
                 exit(1);
             }
         } else {
-            // CHILD
+            // GRAND CHILD
             // read from pipe1
             dup2(fds[1][0], STDIN_FILENO);
             close(fds[0][0]);
@@ -73,13 +85,6 @@ int main( int argc, char** argv ) {
             exit(1);
         }
 
-        // fork a great-grand-child
-        // if I'm a great-grand-child
-        // execute "ps"
-        // else if I'm a grand-child
-        // execute "grep"
-        // else if I'm a child
-        // execute "wc"
     }
     else {
         // PARENT
