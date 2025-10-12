@@ -23,134 +23,87 @@
 using namespace std;
 
 int main( int argc, char** argv ) {
-    if(argc != 2) {
+    if(argc != 2) { // pass exactly one argument
         cerr << "Usage: processes <command>" << endl;
         exit(-1);
     }
 
-    int fds[2][2]; // fds[0] = pipe ps->grep, fds[1] = pipe grep->wc
+    // fds[0] = pipe ps->grep
+    // fds[1] = pipe grep->wc
+    int fds[2][2];
 
-    // create both pipes before any forks
-    if(pipe(fds[0]) == -1) { perror("pipe0 failed"); exit(1); }
-    if(pipe(fds[1]) == -1) { perror("pipe1 failed"); exit(1); }
+    // create the pipes before forking
+    if(pipe(fds[0]) == -1) { // ps --> grep
+        perror("pipe0 failed"); exit(1);
+    }
+
+    if(pipe(fds[1]) == -1) { // grep --> wc
+        perror("pipe1 failed"); exit(1);
+    }
 
     pid_t pid;
 
-    // -------- CHILD PROCESS: wc -l --------
+    //  CHILD PROCESS (wc -l)
     pid = fork();
-    if(pid < 0) { perror("fork wc failed"); exit(1); }
-    else if(pid == 0) {
-        // redirect stdin from pipe1 (grep -> wc)
+    if(pid < 0) {
+        perror("fork wc failed");
+        exit(1);
+    }
+
+    else if(pid == 0) { // readend of pipe1 (grep -> wc)
         dup2(fds[1][0], STDIN_FILENO);
-        // close all pipe ends not needed
+        // close not needed pipe ends
         close(fds[0][0]); close(fds[0][1]);
         close(fds[1][0]); close(fds[1][1]);
         execlp("wc", "wc", "-l", (char*)NULL);
-        perror("exec wc failed"); exit(1);
+        perror("exec wc failed");
+        exit(1);
     }
 
-    // -------- GRANDCHILD PROCESS: grep argv[1] --------
+    // GRANDCHILD PROCESS (grep argv[1])
     pid = fork();
-    if(pid < 0) { perror("fork grep failed"); exit(1); }
+    if(pid < 0) {
+        perror("fork grep failed");
+        exit(1);
+    }
     else if(pid == 0) {
-        // stdin comes from ps (pipe0)
+        // read from pipe0 (ps --> grep_
         dup2(fds[0][0], STDIN_FILENO);
-        // stdout goes to wc (pipe1)
+        // write to pipe1 (grep --> wc)
         dup2(fds[1][1], STDOUT_FILENO);
-        // close all pipe ends not needed
         close(fds[0][0]); close(fds[0][1]);
         close(fds[1][0]); close(fds[1][1]);
         execlp("grep", "grep", argv[1], (char*)NULL);
-        perror("exec grep failed"); exit(1);
+        perror("exec grep failed");
+        exit(1);
     }
 
-    // -------- GREAT-GRANDCHILD PROCESS: ps -A --------
+    // GREAT-GRANDCHILD PROCESS (ps -A)
     pid = fork();
-    if(pid < 0) { perror("fork ps failed"); exit(1); }
+    if(pid < 0) {
+        perror("fork ps failed");
+        exit(1);
+    }
     else if(pid == 0) {
-        // stdout goes to grep (pipe0)
+        // redirect to pipe0
         dup2(fds[0][1], STDOUT_FILENO);
-        // close all pipe ends not needed
         close(fds[0][0]); close(fds[0][1]);
         close(fds[1][0]); close(fds[1][1]);
         execlp("ps", "ps", "-A", (char*)NULL);
-        perror("exec ps failed"); exit(1);
+        perror("exec ps failed");
+        exit(1);
     }
 
-    // -------- PARENT --------
-    // parent closes all pipe ends immediately so ps does not see wc/grep
-    close(fds[0][0]); close(fds[0][1]);
-    close(fds[1][0]); close(fds[1][1]);
+    // PARENT: closes all pipe ends immediately
+    close(fds[0][0]);
+    close(fds[0][1]);
+    close(fds[1][0]);
+    close(fds[1][1]);
 
-    // wait for all children to finish
+    // wait for children to finish
     for(int i = 0; i < 3; i++) wait(NULL);
 
     cout << "commands completed" << endl;
     return 0;
-
-    // todo <--
-
-    /*
-
-    // fork a child
-    if ( ( pid = fork( ) ) < 0 ) {
-        perror( "fork error" );
-    }
-    // child does pipeline work
-    else if ( pid == 0 ) {
-        // CHILD PROCESS
-        // create a pipe using fds[0], pipe for ps --> grep
-        pipe(fds[0]);
-
-        if ((pid = fork()) == 0) {
-            // GREAT GRAND-CHILD PROCESS
-            // create another pipe using fds[1]
-            pipe(fds[1]);
-
-            if ((pid = fork()) == 0) {
-                // STDIN_FILENO (0) → reads from keyboard
-                // STDOUT_FILENO (1) writes to screen
-                // 0 = read end of pipe, 1 = write end of pipe
-                dup2(fds[0][1], STDOUT_FILENO);
-                close(fds[0][0]); // closes the unused read end
-                close(fds[0][1]); // closes write
-                // -e → show all processes
-                //-f → show full format listing
-                execlp("ps", "ps", "ef", (char*)NULL);
-                perror("the exec ps command failed");
-                exit(1);
-            } else {
-                // GRAND-CHILD PROCESS
-                dup2(fds[0][0], STDIN_FILENO);
-                dup2(fds[1][1], STDOUT_FILENO);
-                close(fds[0][0]);
-                close(fds[0][1]);
-                close(fds[1][0]); // close read end (pipe1)
-                close(fds[1][1]); // close write end (pipe1)
-                execlp("grep", "grep", argv[1], (char*)NULL);
-                perror("exec grep failed");
-                exit(1);
-            }
-        } else {
-            // GRAND CHILD
-            // read from pipe1
-            dup2(fds[1][0], STDIN_FILENO);
-            close(fds[0][0]);
-            close(fds[0][1]);
-            close(fds[1][0]);
-            close(fds[1][1]);
-            execlp("wc", "wc", "-l", (char*)NULL);
-            perror("the exec wc command failed");
-            exit(1);
-        }
-
-    }
-    else {
-        // PARENT
-        wait( NULL );
-        cout << "commands completed" << endl;
-    }
-     */
-
 }
 
