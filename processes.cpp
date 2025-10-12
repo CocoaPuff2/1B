@@ -23,58 +23,57 @@
 using namespace std;
 
 int main( int argc, char** argv ) {
+    int fds[2][2];
+    int pid;
+
     if (argc != 2) {
         cerr << "Usage: processes command" << endl;
         exit(-1);
     }
 
-    int fds[2][2];
-    pipe(fds[0]); //  fds[0] for ps→grep
-    pipe(fds[1]); //  fds[1] for grep→wc
+    // Create both pipes BEFORE any fork
+    pipe(fds[0]); // ps -> grep
+    pipe(fds[1]); // grep -> wc
 
-    int pid;
-
-    // Child: "ps -ef"
-    if ((pid = fork()) == 0) {
-        dup2(fds[0][1], STDOUT_FILENO); // send ps output to pipe[0]
-        close(fds[0][0]); close(fds[0][1]);
-        close(fds[1][0]); close(fds[1][1]);
-        execlp("ps", "ps", "-ef", (char*)NULL);
-        perror("exec ps failed");
-        exit(1);
+    if ((pid = fork()) < 0) {
+        perror("fork error");
     }
-
-    // 2️⃣ Second child: "grep <keyword>"
-    if ((pid = fork()) == 0) {
-        dup2(fds[0][0], STDIN_FILENO);  // read from ps output
-        dup2(fds[1][1], STDOUT_FILENO); // send to wc input
-        close(fds[0][0]); close(fds[0][1]);
-        close(fds[1][0]); close(fds[1][1]);
-        execlp("grep", "grep", argv[1], (char*)NULL);
-        perror("exec grep failed");
-        exit(1);
+    else if (pid == 0) {
+        // CHILD PROCESS (ps)
+        if ((pid = fork()) == 0) {
+            // GREAT-GRANDCHILD -> ps
+            dup2(fds[0][1], STDOUT_FILENO); // ps output to pipe0
+            close(fds[0][0]); close(fds[0][1]);
+            close(fds[1][0]); close(fds[1][1]);
+            execlp("ps", "ps", "ef", (char*)NULL);
+            perror("exec ps failed");
+            exit(1);
+        } else {
+            // GRANDCHILD -> grep
+            if ((pid = fork()) == 0) {
+                dup2(fds[0][0], STDIN_FILENO);  // read from ps
+                dup2(fds[1][1], STDOUT_FILENO); // output to wc
+                close(fds[0][0]); close(fds[0][1]);
+                close(fds[1][0]); close(fds[1][1]);
+                execlp("grep", "grep", argv[1], (char*)NULL);
+                perror("exec grep failed");
+                exit(1);
+            } else {
+                // GREAT-GRANDCHILD -> wc
+                dup2(fds[1][0], STDIN_FILENO);  // read from grep
+                close(fds[0][0]); close(fds[0][1]);
+                close(fds[1][0]); close(fds[1][1]);
+                execlp("wc", "wc", "-l", (char*)NULL);
+                perror("exec wc failed");
+                exit(1);
+            }
+        }
     }
-
-    // 3️⃣ Third child: "wc -l"
-    if ((pid = fork()) == 0) {
-        dup2(fds[1][0], STDIN_FILENO);  // read from grep output
-        close(fds[0][0]); close(fds[0][1]);
-        close(fds[1][0]); close(fds[1][1]);
-        execlp("wc", "wc", "-l", (char*)NULL);
-        perror("exec wc failed");
-        exit(1);
-    }
-
-    // 🧍 Parent process: close all pipes and wait
-    close(fds[0][0]); close(fds[0][1]);
-    close(fds[1][0]); close(fds[1][1]);
-
-    for (int i = 0; i < 3; i++)
+    else {
+        // PARENT
         wait(NULL);
-
-    cout << "commands completed" << endl;
-    return 0;
-
+        cout << "commands completed" << endl;
+    }
     /*
     // fds[0] connect child → grandchild (ps->grep)
     //fds[1] connect grandchild → great-grandchild (grep-wc)
