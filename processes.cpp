@@ -23,15 +23,65 @@
 using namespace std;
 
 int main( int argc, char** argv ) {
-    // fds[0] connect child → grandchild
-    //fds[1] connect grandchild → great-grandchild
+    if (argc != 2) {
+        cerr << "Usage: processes command" << endl;
+        exit(-1);
+    }
+
+    int fds[2][2];
+    pipe(fds[0]); //  fds[0] for ps→grep
+    pipe(fds[1]); //  fds[1] for grep→wc
+
+    int pid;
+
+    // Child: "ps -ef"
+    if ((pid = fork()) == 0) {
+        dup2(fds[0][1], STDOUT_FILENO); // send ps output to pipe[0]
+        close(fds[0][0]); close(fds[0][1]);
+        close(fds[1][0]); close(fds[1][1]);
+        execlp("ps", "ps", "-ef", (char*)NULL);
+        perror("exec ps failed");
+        exit(1);
+    }
+
+    // 2️⃣ Second child: "grep <keyword>"
+    if ((pid = fork()) == 0) {
+        dup2(fds[0][0], STDIN_FILENO);  // read from ps output
+        dup2(fds[1][1], STDOUT_FILENO); // send to wc input
+        close(fds[0][0]); close(fds[0][1]);
+        close(fds[1][0]); close(fds[1][1]);
+        execlp("grep", "grep", argv[1], (char*)NULL);
+        perror("exec grep failed");
+        exit(1);
+    }
+
+    // 3️⃣ Third child: "wc -l"
+    if ((pid = fork()) == 0) {
+        dup2(fds[1][0], STDIN_FILENO);  // read from grep output
+        close(fds[0][0]); close(fds[0][1]);
+        close(fds[1][0]); close(fds[1][1]);
+        execlp("wc", "wc", "-l", (char*)NULL);
+        perror("exec wc failed");
+        exit(1);
+    }
+
+    // 🧍 Parent process: close all pipes and wait
+    close(fds[0][0]); close(fds[0][1]);
+    close(fds[1][0]); close(fds[1][1]);
+
+    for (int i = 0; i < 3; i++)
+        wait(NULL);
+
+    cout << "commands completed" << endl;
+    return 0;
+
+    /*
+    // fds[0] connect child → grandchild (ps->grep)
+    //fds[1] connect grandchild → great-grandchild (grep-wc)
     int fds[2][2];
     int pid;
 
-    if ( argc != 2 ) {
-        cerr << "Usage: processes command" << endl;
-        exit( -1 );
-    }
+
 
     // fork a child
     if ( ( pid = fork( ) ) < 0 ) {
@@ -91,5 +141,6 @@ int main( int argc, char** argv ) {
         wait( NULL );
         cout << "commands completed" << endl;
     }
+     */
 }
 
